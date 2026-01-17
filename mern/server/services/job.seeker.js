@@ -71,23 +71,33 @@ class JobSeekerService {
     async processCard(page, index, settings, logCallback) {
         try {
             // Refetch cards to avoid stale elements
-            const cards = await page.$$('li.jobs-search-results__list-item, div.job-card-container');
+            const cardSelector = 'li.jobs-search-results__list-item, div.job-card-container, div.job-card-list__entity-lockup';
+            const cards = await page.$$(cardSelector);
             const card = cards[index];
 
             if (!card) return;
 
-            // Scroll into View
-            await page.evaluate(el => el.scrollIntoView({ block: 'center' }), card);
-            await Utils.delay(300);
+            // Check if frame is still valid by checking a property
+            try {
+                await page.evaluate(el => el.scrollIntoView({ block: 'center' }), card);
+                await Utils.delay(500);
+                await page.evaluate(el => el.click(), card);
+            } catch (e) {
+                // If checking fails, the list might have refreshed. Abort this card.
+                return;
+            }
 
-            // Click
-            await page.evaluate(el => el.click(), card);
+            // Wait for details panel to update
+            await Utils.delay(3000);
 
             // Delegate to Applier
             await JobApplier.processJob(page, settings, logCallback);
 
         } catch (e) {
-            Utils.log(`Error on card ${index}: ${e.message}`, logCallback);
+            // Ignore detached errors effectively
+            if (!e.message.includes('detached') && !e.message.includes('destroyed')) {
+                Utils.log(`Error on card ${index}: ${e.message}`, logCallback);
+            }
         }
     }
 

@@ -69,100 +69,130 @@ class JobApplierService {
 
     async handleModal(page, logCallback) {
         Utils.log("Handling Application Modal...", logCallback);
-        // Wait for modal
+
+        // Wait for modal to appear
+        const modalSelector = '.jobs-easy-apply-content, .jobs-easy-apply-modal';
         try {
-            await page.waitForSelector('.jobs-easy-apply-content', { timeout: 5000 });
+            await page.waitForSelector(modalSelector, { timeout: 10000 });
         } catch {
-            Utils.log("Modal did not appear.", logCallback);
+            Utils.log("Easy Apply Modal did not appear in time.", logCallback);
             return;
         }
 
         let attempts = 0;
-        const MAX_STEPS = 15;
+        const MAX_STEPS = 20;
 
         while (attempts < MAX_STEPS) {
-            await Utils.delay(1000); // Pace ourselves
+            await Utils.delay(1000);
 
             // 1. Handle Questions (Inputs/Radios)
             await this.fillQuestions(page, logCallback);
 
             // 2. Identify Action Buttons
-            const submitBtn = await page.$('button[aria-label="Submit application"]');
-            const nextBtn = await page.$('button[aria-label="Continue to next step"]');
-            const reviewBtn = await page.$('button[aria-label="Review your application"]');
+            const submitBtn = await this.findButtonByText(page, ["submit application", "submit"]);
+            const nextBtn = await this.findButtonByText(page, ["continue to next step", "next"]);
+            const reviewBtn = await this.findButtonByText(page, ["review your application", "review"]);
 
             if (submitBtn) {
-                Utils.log("Submitting application...", logCallback);
+                Utils.log("Found Submit button. Clicking...", logCallback);
                 await this.clickButton(page, submitBtn);
-                await Utils.delay(3000); // wait for success
-                await page.keyboard.press('Escape'); // close success/confetti
+                await Utils.delay(4000);
+                // Check if success (modal closes or success msg)
+                await page.keyboard.press('Escape');
                 return;
             }
 
             if (nextBtn) {
-                Utils.log("Clicking Next...", logCallback);
+                Utils.log("Found Next button. Clicking...", logCallback);
                 await this.clickButton(page, nextBtn);
 
-                // Check for errors after clicking Next
-                await Utils.delay(1000);
+                await Utils.delay(1500);
+                // Check for validation error
                 const error = await page.$('.artdeco-inline-feedback--error');
                 if (error) {
-                    Utils.log("Form validation error detected. Stopping this application.", logCallback);
-                    await this.closeModal(page);
+                    Utils.log("Validation error. Cannot proceed. closing...", logCallback);
+                    await this.closeModal(page, logCallback);
                     return;
                 }
+                attempts++;
                 continue;
             }
 
             if (reviewBtn) {
-                Utils.log("Reviewing application...", logCallback);
+                Utils.log("Found Review button. Clicking...", logCallback);
                 await this.clickButton(page, reviewBtn);
+                attempts++;
                 continue;
             }
 
-            // No buttons found? Maybe we are done or stuck.
-            Utils.log("No navigation buttons found. Closing modal.", logCallback);
-            await this.closeModal(page);
-            break;
+            // If we are here, we might be stuck or done. 
+            // Check if there's a "Done" button or similar?
+
+            Utils.log(`No clear navigation buttons found (Attempt ${attempts}).`, logCallback);
+            attempts++;
         }
+
+        Utils.log("Max steps reached. Closing modal.", logCallback);
+        await this.closeModal(page, logCallback);
+    }
+
+    async findButtonByText(page, texts) {
+        const buttons = await page.$$('button');
+        for (const btn of buttons) {
+            // Check visibility first
+            const isVisible = await page.evaluate(el => {
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetWidth > 0;
+            }, btn);
+            if (!isVisible) continue;
+
+            const inner = await page.evaluate(el => el.innerText, btn).catch(() => "");
+            const lower = inner.toLowerCase().trim();
+            if (texts.some(t => lower === t || lower.includes(t))) {
+                return btn;
+            }
+        }
+        return null;
     }
 
     async fillQuestions(page, logCallback) {
         try {
-            // Text Inputs: Fill 0 for "years" or "experience" if empty
-            const labels = await page.$$('label');
-            for (const label of labels) {
-                const text = await page.evaluate(el => el.innerText, label).catch(() => "");
-                const lower = text.toLowerCase();
-                if (lower.includes('years') || lower.includes('experience')) {
-                    const id = await page.evaluate(el => el.getAttribute('for'), label);
-                    if (id) {
-                        const input = await page.$(`#${id}`);
-                        if (input) {
-                            const val = await page.evaluate(el => el.value, input);
-                            if (!val) {
-                                await input.type('0', { delay: 50 });
-                                Utils.log(`Auto-filled '0' for: ${text.substring(0, 20)}...`, logCallback);
-                            }
+            // Text Inputs
+            const inputs = await page.$$('input[type="text"], input[type="number"], textarea');
+            for (const input of inputs) {
+                const id = await page.evaluate(el => el.id, input);
+                if (!id) continue;
+
+                const label = await page.$(`label[for="${id}"]`);
+                if (label) {
+                    const text = await page.evaluate(el => el.innerText, label).catch(() => "");
+                    const lower = text.toLowerCase();
+                    if (lower.includes('years') || lower.includes('experience')) {
+                        const val = await page.evaluate(el => el.value, input);
+                        if (!val) {
+                            await input.type('0', { delay: 50 });
+                            Utils.log(`Auto-filled '0' for: ${text.substring(0, 30)}...`, logCallback);
                         }
                     }
                 }
             }
-
-            // Radio Buttons: Always select first option if none selected (Risky but automated)
-            // ... can implement later if needed
         } catch (e) {
-            console.error(e);
+            // ignore
         }
     }
 
-    async closeModal(page) {
+    async closeModal(page, logCallback) {
+        Utils.log("Closing modal...", logCallback);
         await page.keyboard.press('Escape');
-        await Utils.delay(500);
+        await Utils.delay(1000);
 
-        // "Discard" confirmation?
-        const discardBtn = await page.$('button[data-control-name="discard_application_confirm_btn"]');
-        if (discardBtn) await this.clickButton(page, discardBtn);
+        // Handle "Save this application?" dialog (Discard / Save)
+        // We want to click "Discard"
+        const discardBtn = await this.findButtonByText(page, ["discard"]);
+        if (discardBtn) {
+            Utils.log("Found Discard button. Clicking...", logCallback);
+            await this.clickButton(page, discardBtn);
+        }
     }
 }
 

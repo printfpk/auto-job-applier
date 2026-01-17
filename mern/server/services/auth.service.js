@@ -16,10 +16,13 @@ class AuthService {
             await page.type('#username', username, { delay: 50 });
             await page.type('#password', password, { delay: 50 });
 
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
-                page.click('[type="submit"]'),
-            ]);
+            const navPromise = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => "timeout");
+            await page.click('[type="submit"]');
+
+            await navPromise;
+
+            // Allow some time for redirects
+            await Utils.delay(5000);
 
             if (page.url().includes("feed") || page.url().includes("check")) {
                 Utils.log("Login successful.", logCallback);
