@@ -23,11 +23,14 @@ class JobApplierService {
 
                 // 3. Handle Modal
                 await ModalManager.handle(page, logCallback);
+                return true;
             } else {
                 Utils.log("No Easy Apply button found (Already applied / External).", logCallback);
+                return false;
             }
         } catch (e) {
             console.error("Error processing job:", e);
+            return false;
         }
     }
 
